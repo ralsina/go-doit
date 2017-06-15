@@ -19,6 +19,7 @@ type Task struct {
 	upToDate bool
 }
 
+//TaskMap is a map of tasks indexed by string
 type TaskMap map[string]Task
 
 // ScheduleTasks sorts tasks on order of execution to satisfy
@@ -34,7 +35,7 @@ func ScheduleTasks(tasks []Task) (TaskMap, []string) {
 	graph := topsort.NewGraph()
 	graph.AddNode(root.id)
 
-	for i, _ := range tasks {
+	for i := range tasks {
 		// Assign unique UUIDs to all tasks
 		tasks[i].id = uuid.NewV4().String()
 		taskIDMap[tasks[i].id] = tasks[i]
@@ -50,9 +51,7 @@ func ScheduleTasks(tasks []Task) (TaskMap, []string) {
 
 	// Add edges by task dependency
 	for _, task := range tasks {
-		fmt.Println("--->", task.name, task.taskDep)
 		for _, name := range task.taskDep {
-			fmt.Println("==>", task.id, "==>", name)
 			err := graph.AddEdge(task.id, taskNameMap[name])
 			if err != nil {
 				log.Fatal(err)
@@ -60,10 +59,6 @@ func ScheduleTasks(tasks []Task) (TaskMap, []string) {
 		}
 	}
 	results, err := graph.TopSort(root.id)
-
-	for _, id := range results {
-		fmt.Printf("%s -> ", taskIDMap[id].name)
-	}
 
 	if err != nil {
 		log.Fatal(err)
@@ -75,9 +70,12 @@ func main() {
 	t1 := Task{name: "t1"}
 	t2 := Task{name: "t2"}
 	t3 := Task{name: "t3"}
-	t3.taskDep = append(t3.taskDep, "t2")
+	t2.taskDep = append(t2.taskDep, "t3")
 	t1.taskDep = append(t1.taskDep, "t2")
 	t1.taskDep = append(t1.taskDep, "t3")
 	tasks := [...]Task{t1, t2, t3}
-	ScheduleTasks(tasks[:])
+	m, r := ScheduleTasks(tasks[:])
+	for _, id := range r {
+		fmt.Printf("%s -> ", m[id].name)
+	}
 }
