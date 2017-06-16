@@ -11,18 +11,15 @@ import (
 
 	"github.com/asdine/storm"
 	"github.com/deckarep/golang-set"
-	"github.com/satori/go.uuid"
 	"github.com/stevenle/topsort"
 )
 
 //Task is a struct describing a task
 type Task struct {
-	id       string
 	name     string
 	fileDep  mapset.Set
 	targets  mapset.Set
 	taskDep  mapset.Set
-	upToDate bool
 }
 
 //TaskMap is a map of tasks indexed by string
@@ -31,28 +28,24 @@ type TaskMap map[string]Task
 // ScheduleTasks sorts tasks on order of execution to satisfy
 // dependencies.
 func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
-	taskIDMap := make(map[string]Task)
-	taskNameMap := make(map[string]string)
+	taskNameMap := make(map[string]Task)
 	root := Task{
-		id:      uuid.NewV4().String(),
 		name:    "root",
 		fileDep: mapset.NewSet(),
 		targets: mapset.NewSet(),
 		taskDep: mapset.NewSet(),
 	}
-	taskIDMap[root.id] = root
+	taskNameMap[root.name] = root
 	graph := topsort.NewGraph()
-	graph.AddNode(root.id)
+	graph.AddNode(root.name)
 
 	for i := range tasks {
 		// Assign unique UUIDs to all tasks
-		tasks[i].id = uuid.NewV4().String()
-		taskIDMap[tasks[i].id] = tasks[i]
-		taskNameMap[tasks[i].name] = tasks[i].id
+		taskNameMap[tasks[i].name] = tasks[i]
 		// Create task nodes
-		graph.AddNode(tasks[i].id)
+		graph.AddNode(tasks[i].name)
 		// Root depends on all tasks
-		err := graph.AddEdge(root.id, tasks[i].id)
+		err := graph.AddEdge(root.name, tasks[i].name)
 		if err != nil {
 			log.Fatal("Error adding edge: ", err)
 		}
@@ -61,7 +54,7 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 	// Add edges by task dependency
 	for _, task := range tasks {
 		for name := range task.taskDep.Iter() {
-			err := graph.AddEdge(task.id, taskNameMap[name.(string)])
+			err := graph.AddEdge(task.name, name.(string))
 			if err != nil {
 				log.Fatal("Error adding edge: ", err)
 			}
@@ -99,22 +92,22 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 		for _, dest := range tasks {
 			for targetFile := range dest.targets.Iter() {
 				if source.fileDep.Contains(targetFile) {
-					graph.AddEdge(source.id, dest.id)
+					graph.AddEdge(source.name, dest.name)
 				}
 			}
 		}
 	}
 
 	// Sort topologically and return
-	idResults, err := graph.TopSort(root.id)
+	nameResults, err := graph.TopSort(root.name)
 	if err != nil {
 		log.Fatal("Error sorting tasks: ", err)
 	}
 
 	// Re-map IDs to tasks
 	taskResults := make([]Task, len(tasks)+1)
-	for i := range idResults {
-		taskResults[i] = taskIDMap[idResults[i]]
+	for i := range nameResults {
+		taskResults[i] = taskNameMap[nameResults[i]]
 	}
 	results := FilterTasks(taskResults, db)
 	return results
