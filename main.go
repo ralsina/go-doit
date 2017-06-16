@@ -7,11 +7,12 @@ import (
 	"log"
 	"os"
 
+	"reflect"
+
+	"github.com/asdine/storm"
 	"github.com/deckarep/golang-set"
 	"github.com/satori/go.uuid"
 	"github.com/stevenle/topsort"
-	"github.com/asdine/storm"
-	"reflect"
 )
 
 //Task is a struct describing a task
@@ -33,8 +34,8 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 	taskIDMap := make(map[string]Task)
 	taskNameMap := make(map[string]string)
 	root := Task{
-		id:   uuid.NewV4().String(),
-		name: "root",
+		id:      uuid.NewV4().String(),
+		name:    "root",
 		fileDep: mapset.NewSet(),
 		targets: mapset.NewSet(),
 		taskDep: mapset.NewSet(),
@@ -53,7 +54,7 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 		// Root depends on all tasks
 		err := graph.AddEdge(root.id, tasks[i].id)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("Error adding edge: ", err)
 		}
 	}
 
@@ -62,7 +63,7 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 		for name := range task.taskDep.Iter() {
 			err := graph.AddEdge(task.id, taskNameMap[name.(string)])
 			if err != nil {
-				log.Fatal(err)
+				log.Fatal("Error adding edge: ", err)
 			}
 		}
 	}
@@ -79,10 +80,10 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 
 	// Sanity check: fileDeps either exist or are targets
 	allTargets := mapset.NewSet()
-	for i := range(tasks) {
+	for i := range tasks {
 		allTargets = allTargets.Union(tasks[i].targets)
 	}
-	for i := range(tasks) {
+	for i := range tasks {
 		// What deps are NOT targets?
 		notTargets := tasks[i].fileDep.Difference(allTargets)
 		// All these must exist
@@ -107,12 +108,12 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 	// Sort topologically and return
 	idResults, err := graph.TopSort(root.id)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Error sorting tasks: ", err)
 	}
 
 	// Re-map IDs to tasks
 	taskResults := make([]Task, len(tasks)+1)
-	for i := range(idResults) {
+	for i := range idResults {
 		taskResults[i] = taskIDMap[idResults[i]]
 	}
 	results := FilterTasks(taskResults, db)
@@ -123,7 +124,7 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 func InitDB(path string) *storm.DB {
 	db, err := storm.Open(path)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Error opening DB: ", err)
 	}
 	return db
 }
@@ -135,19 +136,19 @@ func hashFile(path string) string {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error opening file %s: %s", path, err)
 	}
 	defer f.Close()
 
 	h := md5.New()
 	if _, err := io.Copy(h, f); err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error reading file %s: %s", path, err)
 	}
 	return string(h.Sum(nil))
 }
 
 // FilterTasks takes a list of tasks and return tasks that are not up to date.
-func FilterTasks(tasks []Task, db *storm.DB) []Task{
+func FilterTasks(tasks []Task, db *storm.DB) []Task {
 	result := make([]Task, 0)
 	for _, t := range tasks {
 		if dirty(t, db) {
@@ -159,9 +160,8 @@ func FilterTasks(tasks []Task, db *storm.DB) []Task{
 
 // DepData describes both a task and its file dependencies state
 type DepData struct {
-	ID int
-	taskName string `storm:"unique"`
-	task Task `storm:"inline"`
+	ID         string `storm:"id"`
+	task       Task   `storm:"inline"`
 	fileHashes map[string]string
 }
 
@@ -172,9 +172,27 @@ func CalculateDepData(task Task) DepData {
 	for path := range task.fileDep.Iter() {
 		hashes[path.(string)] = hashFile(path.(string))
 	}
-	return DepData {
-		task: task,
+	return DepData{
+		task:       task,
+		ID:         task.name,
 		fileHashes: hashes,
+	}
+}
+
+// GetLastDepData gets the last state for a task as stored in the database.
+func GetLastDepData(task Task, db *storm.DB) DepData {
+	var result DepData
+	db.One("ID", task.name, &result)
+	// TODO: handle error
+	return result
+}
+
+// UpdateDepData stores current state for a task into the DB
+func UpdateDepData(task Task, db *storm.DB) {
+	data := CalculateDepData(task)
+	err := db.Save(&data)
+	if err != nil {
+		log.Fatal("Error saving data to DB: ", err)
 	}
 }
 
@@ -183,14 +201,6 @@ func dirty(task Task, db *storm.DB) bool {
 	old := GetLastDepData(task, db)
 	new := CalculateDepData(task)
 	return !reflect.DeepEqual(old, new)
-}
-
-// GetLastDepData gets the last state for a task as stored in the database.
-func GetLastDepData(task Task, db *storm.DB) DepData {
-	var result DepData
-	db.One("taskName", task.name, &result)
-	// TODO: handle error
-	return result
 }
 
 func main() {
@@ -217,12 +227,13 @@ func main() {
 	}
 	t1.fileDep.Add("f1")
 	t1.fileDep.Add("f2")
-	t3.targets.Add("f3")
+	t3.targets.Add("f2")
 	t2.targets.Add("f1")
-	t2.targets.Add("f2")
 	tasks := [...]Task{t1, t2, t3}
 	r := ScheduleTasks(tasks[:], db)
 	for _, t := range r {
 		fmt.Printf("%s -> ", t.name)
+		UpdateDepData(t, db)
+		fmt.Printf("%b", dirty(t, db))
 	}
 }
