@@ -7,10 +7,11 @@ import (
 	"log"
 	"os"
 
-	"github.com/boltdb/bolt"
 	"github.com/deckarep/golang-set"
 	"github.com/satori/go.uuid"
 	"github.com/stevenle/topsort"
+	"github.com/asdine/storm"
+	"reflect"
 )
 
 //Task is a struct describing a task
@@ -19,7 +20,7 @@ type Task struct {
 	name     string
 	fileDep  mapset.Set
 	targets  mapset.Set
-	taskDep  []string
+	taskDep  mapset.Set
 	upToDate bool
 }
 
@@ -28,12 +29,15 @@ type TaskMap map[string]Task
 
 // ScheduleTasks sorts tasks on order of execution to satisfy
 // dependencies.
-func ScheduleTasks(tasks []Task) (TaskMap, []string) {
+func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 	taskIDMap := make(map[string]Task)
 	taskNameMap := make(map[string]string)
 	root := Task{
 		id:   uuid.NewV4().String(),
 		name: "root",
+		fileDep: mapset.NewSet(),
+		targets: mapset.NewSet(),
+		taskDep: mapset.NewSet(),
 	}
 	taskIDMap[root.id] = root
 	graph := topsort.NewGraph()
@@ -55,8 +59,8 @@ func ScheduleTasks(tasks []Task) (TaskMap, []string) {
 
 	// Add edges by task dependency
 	for _, task := range tasks {
-		for _, name := range task.taskDep {
-			err := graph.AddEdge(task.id, taskNameMap[name])
+		for name := range task.taskDep.Iter() {
+			err := graph.AddEdge(task.id, taskNameMap[name.(string)])
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -101,17 +105,23 @@ func ScheduleTasks(tasks []Task) (TaskMap, []string) {
 	}
 
 	// Sort topologically and return
-	results, err := graph.TopSort(root.id)
-
+	idResults, err := graph.TopSort(root.id)
 	if err != nil {
 		log.Fatal(err)
 	}
-	return taskIDMap, results
+
+	// Re-map IDs to tasks
+	taskResults := make([]Task, len(tasks)+1)
+	for i := range(idResults) {
+		taskResults[i] = taskIDMap[idResults[i]]
+	}
+	results := FilterTasks(taskResults, db)
+	return results
 }
 
-// InitDB creates/opens a BoltDB to store up-to-date data
-func InitDB(path string) *bolt.DB {
-	db, err := bolt.Open(path, 0600, nil)
+// InitDB creates/opens a Storm DB to store up-to-date data
+func InitDB(path string) *storm.DB {
+	db, err := storm.Open(path)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -119,7 +129,11 @@ func InitDB(path string) *bolt.DB {
 }
 
 func hashFile(path string) string {
-	f, err := os.Open("file.txt")
+	// FIles that don't exist have invalud hashes
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return ""
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -132,35 +146,51 @@ func hashFile(path string) string {
 	return string(h.Sum(nil))
 }
 
-// dirty calculates if a task deps have changed since last run
-func dirty(task Task) bool {
-	// TODO: Implement
-	return true
-}
-
 // FilterTasks takes a list of tasks and return tasks that are not up to date.
-func FilterTasks(tasks []Task, db *bolt.DB) []Task{
-	result := make([]Task, len(tasks))
-	for i := range tasks {
-		if dirty(tasks[i]) {
-			result = append(result, tasks[i])
+func FilterTasks(tasks []Task, db *storm.DB) []Task{
+	result := make([]Task, 0)
+	for _, t := range tasks {
+		if dirty(t, db) {
+			result = append(result, t)
 		}
 	}
 	return result
 }
 
+// DepData describes both a task and its file dependencies state
 type DepData struct {
+	ID int
+	taskName string `storm:"unique"`
+	task Task `storm:"inline"`
 	fileHashes map[string]string
 }
 
+// CalculateDepData creates a DepData struct for a given task matching the
+// current state of the universe.
 func CalculateDepData(task Task) DepData {
 	hashes := make(map[string]string)
 	for path := range task.fileDep.Iter() {
 		hashes[path.(string)] = hashFile(path.(string))
 	}
 	return DepData {
+		task: task,
 		fileHashes: hashes,
 	}
+}
+
+// dirty calculates if a task deps have changed since last run
+func dirty(task Task, db *storm.DB) bool {
+	old := GetLastDepData(task, db)
+	new := CalculateDepData(task)
+	return !reflect.DeepEqual(old, new)
+}
+
+// GetLastDepData gets the last state for a task as stored in the database.
+func GetLastDepData(task Task, db *storm.DB) DepData {
+	var result DepData
+	db.One("taskName", task.name, &result)
+	// TODO: handle error
+	return result
 }
 
 func main() {
@@ -171,25 +201,28 @@ func main() {
 		name:    "t1",
 		fileDep: mapset.NewSet(),
 		targets: mapset.NewSet(),
+		taskDep: mapset.NewSet(),
 	}
 	t2 := Task{
 		name:    "t2",
 		fileDep: mapset.NewSet(),
 		targets: mapset.NewSet(),
+		taskDep: mapset.NewSet(),
 	}
 	t3 := Task{
 		name:    "t3",
 		fileDep: mapset.NewSet(),
 		targets: mapset.NewSet(),
+		taskDep: mapset.NewSet(),
 	}
 	t1.fileDep.Add("f1")
 	t1.fileDep.Add("f2")
 	t3.targets.Add("f3")
-	// t2.targets.Add("f1")
+	t2.targets.Add("f1")
 	t2.targets.Add("f2")
 	tasks := [...]Task{t1, t2, t3}
-	m, r := ScheduleTasks(tasks[:])
-	for _, id := range r {
-		fmt.Printf("%s -> ", m[id].name)
+	r := ScheduleTasks(tasks[:], db)
+	for _, t := range r {
+		fmt.Printf("%s -> ", t.name)
 	}
 }
