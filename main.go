@@ -7,6 +7,7 @@ import (
 	"github.com/deckarep/golang-set"
 	"github.com/satori/go.uuid"
 	"github.com/stevenle/topsort"
+	"github.com/boltdb/bolt"
 )
 
 //Task is a struct describing a task
@@ -90,11 +91,18 @@ func ScheduleTasks(tasks []Task) (TaskMap, []string) {
 }
 
 // InitDB creates/opens a BoltDB to store up-to-date data
-func InitDB(path string) {
-	
+func InitDB(path string) *bolt.DB {
+	db, err := bolt.Open(path, 0600, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return db
 }
 
 func main() {
+	db := InitDB("my.db")
+	defer db.Close()
+
 	t1 := Task{
 		name:    "t1",
 		fileDep: mapset.NewSet(),
