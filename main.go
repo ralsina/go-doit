@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/deckarep/golang-set"
 	"github.com/satori/go.uuid"
 	"github.com/stevenle/topsort"
 )
@@ -12,9 +13,8 @@ import (
 type Task struct {
 	id       string
 	name     string
-	actions  []string
-	fileDep  []string
-	targets  []string
+	fileDep  mapset.Set
+	targets  mapset.Set
 	taskDep  []string
 	upToDate bool
 }
@@ -58,6 +58,29 @@ func ScheduleTasks(tasks []Task) (TaskMap, []string) {
 			}
 		}
 	}
+
+	// Sanity check: targets can't be repeated
+	for i, t1 := range tasks {
+		for _, t2 := range tasks[i+1:] {
+			inter := t1.targets.Intersect(t2.targets)
+			if inter.Cardinality() > 0 {
+				log.Fatalf("Tasks %s and %s share targets: %s", t1.name, t2.name, inter)
+			}
+		}
+	}
+
+	// Add edges by fileDep/target relationship
+	for _, source := range tasks {
+		for _, dest := range tasks {
+			for targetFile := range dest.targets.Iter() {
+				if source.fileDep.Contains(targetFile) {
+					graph.AddEdge(source.id, dest.id)
+				}
+			}
+		}
+	}
+
+	// Sort topologically and return
 	results, err := graph.TopSort(root.id)
 
 	if err != nil {
@@ -67,12 +90,26 @@ func ScheduleTasks(tasks []Task) (TaskMap, []string) {
 }
 
 func main() {
-	t1 := Task{name: "t1"}
-	t2 := Task{name: "t2"}
-	t3 := Task{name: "t3"}
-	t2.taskDep = append(t2.taskDep, "t3")
-	t1.taskDep = append(t1.taskDep, "t2")
-	t1.taskDep = append(t1.taskDep, "t3")
+	t1 := Task{
+		name:    "t1",
+		fileDep: mapset.NewSet(),
+		targets: mapset.NewSet(),
+	}
+	t2 := Task{
+		name:    "t2",
+		fileDep: mapset.NewSet(),
+		targets: mapset.NewSet(),
+	}
+	t3 := Task{
+		name:    "t3",
+		fileDep: mapset.NewSet(),
+		targets: mapset.NewSet(),
+	}
+	t1.fileDep.Add("f1")
+	t1.fileDep.Add("f2")
+	t3.targets.Add("f3")
+	t2.targets.Add("f1")
+	t2.targets.Add("f2")
 	tasks := [...]Task{t1, t2, t3}
 	m, r := ScheduleTasks(tasks[:])
 	for _, id := range r {
