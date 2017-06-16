@@ -1,13 +1,16 @@
 package main
 
 import (
+	"crypto/md5"
 	"fmt"
+	"io"
 	"log"
+	"os"
 
+	"github.com/boltdb/bolt"
 	"github.com/deckarep/golang-set"
 	"github.com/satori/go.uuid"
 	"github.com/stevenle/topsort"
-	"github.com/boltdb/bolt"
 )
 
 //Task is a struct describing a task
@@ -70,6 +73,22 @@ func ScheduleTasks(tasks []Task) (TaskMap, []string) {
 		}
 	}
 
+	// Sanity check: fileDeps either exist or are targets
+	allTargets := mapset.NewSet()
+	for i := range(tasks) {
+		allTargets = allTargets.Union(tasks[i].targets)
+	}
+	for i := range(tasks) {
+		// What deps are NOT targets?
+		notTargets := tasks[i].fileDep.Difference(allTargets)
+		// All these must exist
+		for path := range notTargets.Iter() {
+			if _, err := os.Stat(path.(string)); os.IsNotExist(err) {
+				log.Fatalf("Path %s is a dependency of task %s and is missing.", path, tasks[i].name)
+			}
+		}
+	}
+
 	// Add edges by fileDep/target relationship
 	for _, source := range tasks {
 		for _, dest := range tasks {
@@ -99,6 +118,51 @@ func InitDB(path string) *bolt.DB {
 	return db
 }
 
+func hashFile(path string) string {
+	f, err := os.Open("file.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+
+	h := md5.New()
+	if _, err := io.Copy(h, f); err != nil {
+		log.Fatal(err)
+	}
+	return string(h.Sum(nil))
+}
+
+// dirty calculates if a task deps have changed since last run
+func dirty(task Task) bool {
+	// TODO: Implement
+	return true
+}
+
+// FilterTasks takes a list of tasks and return tasks that are not up to date.
+func FilterTasks(tasks []Task, db *bolt.DB) []Task{
+	result := make([]Task, len(tasks))
+	for i := range tasks {
+		if dirty(tasks[i]) {
+			result = append(result, tasks[i])
+		}
+	}
+	return result
+}
+
+type DepData struct {
+	fileHashes map[string]string
+}
+
+func CalculateDepData(task Task) DepData {
+	hashes := make(map[string]string)
+	for path := range task.fileDep.Iter() {
+		hashes[path.(string)] = hashFile(path.(string))
+	}
+	return DepData {
+		fileHashes: hashes,
+	}
+}
+
 func main() {
 	db := InitDB("my.db")
 	defer db.Close()
@@ -121,7 +185,7 @@ func main() {
 	t1.fileDep.Add("f1")
 	t1.fileDep.Add("f2")
 	t3.targets.Add("f3")
-	t2.targets.Add("f1")
+	// t2.targets.Add("f1")
 	t2.targets.Add("f2")
 	tasks := [...]Task{t1, t2, t3}
 	m, r := ScheduleTasks(tasks[:])
