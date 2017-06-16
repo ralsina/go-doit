@@ -144,7 +144,7 @@ func hashFile(path string) string {
 	if _, err := io.Copy(h, f); err != nil {
 		log.Fatalf("Error reading file %s: %s", path, err)
 	}
-	return string(h.Sum(nil))
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 // FilterTasks takes a list of tasks and return tasks that are not up to date.
@@ -160,8 +160,7 @@ func FilterTasks(tasks []Task, db *storm.DB) []Task {
 
 // DepData describes both a task and its file dependencies state
 type DepData struct {
-	ID         string `storm:"id"`
-	task       Task   `storm:"inline"`
+	ID         string
 	fileHashes map[string]string
 }
 
@@ -173,7 +172,6 @@ func CalculateDepData(task Task) DepData {
 		hashes[path.(string)] = hashFile(path.(string))
 	}
 	return DepData{
-		task:       task,
 		ID:         task.name,
 		fileHashes: hashes,
 	}
@@ -181,8 +179,10 @@ func CalculateDepData(task Task) DepData {
 
 // GetLastDepData gets the last state for a task as stored in the database.
 func GetLastDepData(task Task, db *storm.DB) DepData {
-	var result DepData
-	db.One("ID", task.name, &result)
+	result := DepData{
+		ID: task.name,
+	}
+	db.Get("ID", task.name, &result.fileHashes)
 	// TODO: handle error
 	return result
 }
@@ -190,7 +190,9 @@ func GetLastDepData(task Task, db *storm.DB) DepData {
 // UpdateDepData stores current state for a task into the DB
 func UpdateDepData(task Task, db *storm.DB) {
 	data := CalculateDepData(task)
-	err := db.Save(&data)
+	err := db.Set("ID", task.name, &data.fileHashes)
+	var back DepData
+	db.Get("ID", task.name, &back.fileHashes)
 	if err != nil {
 		log.Fatal("Error saving data to DB: ", err)
 	}
@@ -232,8 +234,7 @@ func main() {
 	tasks := [...]Task{t1, t2, t3}
 	r := ScheduleTasks(tasks[:], db)
 	for _, t := range r {
-		fmt.Printf("%s -> ", t.name)
 		UpdateDepData(t, db)
-		fmt.Printf("%b", dirty(t, db))
+		fmt.Printf("%v(%v) ->", t.name, dirty(t, db))
 	}
 }
