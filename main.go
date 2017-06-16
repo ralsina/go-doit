@@ -89,6 +89,11 @@ func ScheduleTasks(tasks []Task) (TaskMap, []string) {
 	return taskIDMap, results
 }
 
+// InitDB creates/opens a BoltDB to store up-to-date data
+func InitDB(path string) {
+	
+}
+
 func main() {
 	t1 := Task{
 		name:    "t1",
