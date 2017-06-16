@@ -16,10 +16,10 @@ import (
 
 //Task is a struct describing a task
 type Task struct {
-	name     string
-	fileDep  mapset.Set
-	targets  mapset.Set
-	taskDep  mapset.Set
+	name    string
+	fileDep mapset.Set
+	targets mapset.Set
+	taskDep mapset.Set
 }
 
 //TaskMap is a map of tasks indexed by string
@@ -193,7 +193,24 @@ func UpdateDepData(task Task, db *storm.DB) {
 func dirty(task Task, db *storm.DB) bool {
 	old := GetLastDepData(task, db)
 	new := CalculateDepData(task)
-	return !reflect.DeepEqual(old, new)
+	depsChanged := !reflect.DeepEqual(old, new)
+	if depsChanged {
+		return true
+	}
+	// If any fileDep doesn't exist, task is dirty
+	for path := range task.fileDep.Iter() {
+		if _, err := os.Stat(path.(string)); os.IsNotExist(err) {
+			return true
+		}
+	}
+
+	// If any target doesn't exist, task is dirty
+	for path := range task.targets.Iter() {
+		if _, err := os.Stat(path.(string)); os.IsNotExist(err) {
+			return true
+		}
+	}
+	return false
 }
 
 func main() {
@@ -222,6 +239,7 @@ func main() {
 	t1.fileDep.Add("f2")
 	t3.targets.Add("f2")
 	t2.targets.Add("f1")
+	t2.targets.Add("t1")
 	tasks := [...]Task{t1, t2, t3}
 	r := ScheduleTasks(tasks[:], db)
 	for _, t := range r {
