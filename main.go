@@ -191,8 +191,6 @@ func GetLastDepData(task Task, db *storm.DB) DepData {
 func UpdateDepData(task Task, db *storm.DB) {
 	data := CalculateDepData(task)
 	err := db.Set("ID", task.name, &data.fileHashes)
-	var back DepData
-	db.Get("ID", task.name, &back.fileHashes)
 	if err != nil {
 		log.Fatal("Error saving data to DB: ", err)
 	}
