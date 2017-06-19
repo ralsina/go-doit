@@ -33,7 +33,7 @@ type TaskMap map[string]Task
 // dependencies. It also removes all tasks that have their
 // dependencies unchanged since last successful run.
 func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
-	taskNameMap := make(map[string]Task)
+	taskNameMap := make(TaskMap)
 	root := Task{
 		name:    "root",
 		fileDep: mapset.NewSet(),
@@ -66,16 +66,23 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 		}
 	}
 
-	// Sanity check: fileDeps either exist or are targets
 	allTargets := mapset.NewSet()
+	tasksByTarget := make(map[string]int)
 	for i := range tasks {
 		allTargets = allTargets.Union(tasks[i].targets)
+		for target := range tasks[i].targets.Iter() {
+			// This works because targets can't belong to more than 1 task
+			if task, ok := tasksByTarget[target.(string)]; ok {
+				log.Fatalf("Tasks %s and %s share target: %s", tasks[i].name, tasks[task].name, target.(string))
+			}
+			tasksByTarget[target.(string)] = i
+		}
 	}
 
 	// Add edges by fileDep/target relationship
 	for i, t1 := range tasks {
-		t1tc := t1.targets.Cardinality() > 0
 		t1fc := t1.fileDep.Cardinality() > 0
+		// Sanity check: fileDeps either exist or are targets
 		// What deps are NOT targets?
 		if t1fc {
 			notTargets := tasks[i].fileDep.Difference(allTargets)
@@ -86,32 +93,11 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 				}
 			}
 		}
-		if t1tc || t1fc {
-			for _, t2 := range tasks[i+1:] {
-				t2tc := t2.targets.Cardinality() > 0
-				if t1tc && t2tc {
-					intersection := t1.targets.Intersect(t2.targets)
-					if intersection.Cardinality() > 0 {
-						log.Fatalf("Tasks %s and %s share targets: %s", t1.name, t2.name, intersection)
-					}
-				}
 
-				if t2tc && t1fc {
-					intersection := t1.fileDep.Intersect(t2.targets)
-					if intersection.Cardinality() > 0 {
-						graph.AddEdge(t1.name, t2.name)
-					}
-				}
-
-				t2fc := t2.fileDep.Cardinality() > 0
-				if t1tc && t2fc {
-					intersection := t2.fileDep.Intersect(t1.targets)
-					if intersection.Cardinality() > 0 {
-						graph.AddEdge(t2.name, t1.name)
-					}
-				}
+		for fd := range t1.fileDep.Iter() {
+			if t2id, ok := tasksByTarget[fd.(string)]; ok {
+				graph.AddEdge(t1.name, tasks[t2id].name)
 			}
-
 		}
 	}
 
