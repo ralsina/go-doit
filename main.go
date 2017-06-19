@@ -204,24 +204,35 @@ func fileExists(path string) bool {
 func dirty(task Task, db *storm.DB) bool {
 	old := GetLastDepData(task, db)
 	new := CalculateDepData(task)
+	isDirty := false
+
 	depsChanged := !reflect.DeepEqual(old, new)
 	if depsChanged {
-		return true
+		isDirty = true
 	}
-	// If any fileDep doesn't exist, task is dirty
-	for path := range task.fileDep.Iter() {
-		if !fileExists(path.(string)) {
-			return true
+	if !isDirty {
+		// If any fileDep doesn't exist, task is dirty
+		for path := range task.fileDep.Iter() {
+			if !fileExists(path.(string)) {
+				isDirty = true
+				break
+			}
 		}
 	}
 
-	// If any target doesn't exist, task is dirty
-	for path := range task.targets.Iter() {
-		if !fileExists(path.(string)) {
-			return true
+	if !isDirty {
+		// If any target doesn't exist, task is dirty
+		for path := range task.targets.Iter() {
+			if !fileExists(path.(string)) {
+				isDirty = true
+				break
+			}
 		}
 	}
-	return false
+
+
+
+	return isDirty
 }
 
 func main() {
@@ -248,8 +259,8 @@ func main() {
 			targets: mapset.NewSet(),
 			taskDep: mapset.NewSet(),
 		}
-		// tasks[i].targets.Add(fmt.Sprintf("foo-%d", i))
-		// tasks[i].fileDep.Add(fmt.Sprintf("foo-%d", i-1))
+		tasks[i].targets.Add(fmt.Sprintf("foo-%d", i))
+		tasks[i].fileDep.Add(fmt.Sprintf("foo-%d", i-1))
 	}
 	fmt.Printf("Scheduling %d tasks\n", count)
 	// TODO: cleanup tasks that don't exist anymore
