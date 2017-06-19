@@ -229,7 +229,6 @@ func main() {
 	pprof.StartCPUProfile(f)
 	defer pprof.StopCPUProfile()
 
-	// TODO: see options to improve performance (not sync!)
 	db := InitDB("my.db")
 	db.Bolt.NoSync = true
 	defer db.Close()
