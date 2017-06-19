@@ -12,7 +12,6 @@ import (
 
 	"github.com/asdine/storm"
 	"github.com/deckarep/golang-set"
-	// "github.com/stevenle/topsort"
 	"github.com/philopon/go-toposort"
 )
 
@@ -35,32 +34,18 @@ type TaskMap map[string]Task
 // dependencies unchanged since last successful run.
 func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 	taskNameMap := make(TaskMap)
-	root := Task{
-		name:    "root",
-		fileDep: mapset.NewSet(),
-		targets: mapset.NewSet(),
-		taskDep: mapset.NewSet(),
-	}
-	taskNameMap[root.name] = root
 	graph := toposort.NewGraph(len(tasks))
-	graph.AddNode(root.name)
 
 	for i := range tasks {
 		// Assign unique UUIDs to all tasks
 		taskNameMap[tasks[i].name] = tasks[i]
 		// Create task nodes
 		graph.AddNode(tasks[i].name)
-		// Root depends on all tasks
-		graph.AddEdge(root.name, tasks[i].name)
-		// if err != nil {
-		// 	log.Fatal("Error adding edge: ", err)
-		// }
 	}
 
 	// Add edges by task dependency
 	for _, task := range tasks {
 		for name := range task.taskDep.Iter() {
-			
 			graph.AddEdge(task.name, name.(string))
 		}
 	}
@@ -70,7 +55,6 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 	for i := range tasks {
 		allTargets = allTargets.Union(tasks[i].targets)
 		for target := range tasks[i].targets.Iter() {
-			// This works because targets can't belong to more than 1 task
 			if task, ok := tasksByTarget[target.(string)]; ok {
 				log.Fatalf("Tasks %s and %s share target: %s", tasks[i].name, tasks[task].name, target.(string))
 			}
@@ -78,7 +62,6 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 		}
 	}
 
-	// Add edges by fileDep/target relationship
 	for i, t1 := range tasks {
 		// Sanity check: fileDeps either exist or are targets
 		// What deps are NOT targets?
@@ -89,6 +72,7 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 				log.Fatalf("Path %s is a dependency of task %s and is missing.", path, tasks[i].name)
 			}
 		}
+		// Add edges by fileDep/target relationship
 		for fd := range t1.fileDep.Iter() {
 			if t2id, ok := tasksByTarget[fd.(string)]; ok {
 				graph.AddEdge(t1.name, tasks[t2id].name)
@@ -103,8 +87,11 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 		log.Fatal("Error sorting tasks, cycle detected!")
 	}
 
+	// TODO: Use the sorted graph to create a list of dirty tasks
+
+
 	// Re-map IDs to tasks
-	taskResults := make([]Task, len(tasks)+1)
+	taskResults := make([]Task, len(tasks))
 	for i := range nameResults {
 		taskResults[i] = taskNameMap[nameResults[i]]
 	}
@@ -229,9 +216,6 @@ func dirty(task Task, db *storm.DB) bool {
 			}
 		}
 	}
-
-
-
 	return isDirty
 }
 
