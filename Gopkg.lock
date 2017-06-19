@@ -2,6 +2,12 @@
 
 
 [[projects]]
+  name = "github.com/asdine/storm"
+  packages = [".","codec","codec/json","index","internal","q"]
+  revision = "2da548c16156b3197728372bff5614033084aff5"
+  version = "v0.8.1"
+
+[[projects]]
   name = "github.com/boltdb/bolt"
   packages = ["."]
   revision = "583e8937c61f1af6513608ccc75c97b6abdf4ff9"
@@ -15,15 +21,9 @@
 
 [[projects]]
   branch = "master"
-  name = "github.com/satori/go.uuid"
+  name = "github.com/philopon/go-toposort"
   packages = ["."]
-  revision = "5bf94b69c6b68ee1b541973bb8e1144db23a194b"
-
-[[projects]]
-  branch = "master"
-  name = "github.com/stevenle/topsort"
-  packages = ["."]
-  revision = "8130c1d7596bc28a74df2c52173a89d6a7a06482"
+  revision = "c493b1dfdf89bb9d46b864eb58b44b4da7fb08dc"
 
 [[projects]]
   branch = "master"
@@ -34,6 +34,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "15c05f5c50bad4a8024bfee7d3f134493861c4079046e497c01619eb2df742a5"
+  inputs-digest = "858f8e869d0d4d11d6cbed5ae806550c3c00940214aac53009ec9293d2062ea3"
   solver-name = "gps-cdcl"
   solver-version = 1
