@@ -71,6 +71,7 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 	for i := range tasks {
 		allTargets = allTargets.Union(tasks[i].targets)
 	}
+
 	for i := range tasks {
 		// What deps are NOT targets?
 		notTargets := tasks[i].fileDep.Difference(allTargets)
@@ -84,29 +85,44 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 
 	// Add edges by fileDep/target relationship
 	for i, t1 := range tasks {
-		for _, t2 := range tasks[i+1:] {
-			t1tc := t1.targets.Cardinality()
-			t2tc := t2.targets.Cardinality()
-			if (t1tc > 0) && (t2tc > 0) {
-				intersection := t1.targets.Intersect(t2.targets)
-				if intersection.Cardinality() > 0 {
-					log.Fatalf("Tasks %s and %s share targets: %s", t1.name, t2.name, intersection)
+		t1tc := t1.targets.Cardinality() > 0
+		t1fc := t1.fileDep.Cardinality() > 0
+		// What deps are NOT targets?
+		if t1fc {
+			notTargets := tasks[i].fileDep.Difference(allTargets)
+			// All these must exist
+			for path := range notTargets.Iter() {
+				if _, err := os.Stat(path.(string)); os.IsNotExist(err) {
+					log.Fatalf("Path %s is a dependency of task %s and is missing.", path, tasks[i].name)
+				}
+			}
+		}
+		if t1tc || t1fc {
+			for _, t2 := range tasks[i+1:] {
+				t2tc := t2.targets.Cardinality() > 0
+				if t1tc && t2tc {
+					intersection := t1.targets.Intersect(t2.targets)
+					if intersection.Cardinality() > 0 {
+						log.Fatalf("Tasks %s and %s share targets: %s", t1.name, t2.name, intersection)
+					}
+				}
+
+				if t2tc && t1fc {
+					intersection := t1.fileDep.Intersect(t2.targets)
+					if intersection.Cardinality() > 0 {
+						graph.AddEdge(t1.name, t2.name)
+					}
+				}
+
+				t2fc := t2.fileDep.Cardinality() > 0
+				if t1tc && t2fc {
+					intersection := t2.fileDep.Intersect(t1.targets)
+					if intersection.Cardinality() > 0 {
+						graph.AddEdge(t2.name, t1.name)
+					}
 				}
 			}
 
-			if t2tc > 0 {
-				intersection := t1.fileDep.Intersect(t2.targets)
-				if intersection.Cardinality() > 0 {
-					graph.AddEdge(t1.name, t2.name)
-				}
-			}
-
-			if t1tc > 0 {
-				intersection := t2.fileDep.Intersect(t1.targets)
-				if intersection.Cardinality() > 0 {
-					graph.AddEdge(t2.name, t1.name)
-				}
-			}
 		}
 	}
 
@@ -243,7 +259,7 @@ func main() {
 	db.Bolt.NoSync = true
 	defer db.Close()
 
-	count := 1000
+	count := 20000
 
 	tasks := make([]Task, count)
 
