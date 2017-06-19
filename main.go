@@ -12,7 +12,8 @@ import (
 
 	"github.com/asdine/storm"
 	"github.com/deckarep/golang-set"
-	"github.com/stevenle/topsort"
+	// "github.com/stevenle/topsort"
+	"github.com/philopon/go-toposort"
 )
 
 //Task is a struct describing a task
@@ -41,7 +42,7 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 		taskDep: mapset.NewSet(),
 	}
 	taskNameMap[root.name] = root
-	graph := topsort.NewGraph()
+	graph := toposort.NewGraph(len(tasks))
 	graph.AddNode(root.name)
 
 	for i := range tasks {
@@ -50,19 +51,17 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 		// Create task nodes
 		graph.AddNode(tasks[i].name)
 		// Root depends on all tasks
-		err := graph.AddEdge(root.name, tasks[i].name)
-		if err != nil {
-			log.Fatal("Error adding edge: ", err)
-		}
+		graph.AddEdge(root.name, tasks[i].name)
+		// if err != nil {
+		// 	log.Fatal("Error adding edge: ", err)
+		// }
 	}
 
 	// Add edges by task dependency
 	for _, task := range tasks {
 		for name := range task.taskDep.Iter() {
-			err := graph.AddEdge(task.name, name.(string))
-			if err != nil {
-				log.Fatal("Error adding edge: ", err)
-			}
+			
+			graph.AddEdge(task.name, name.(string))
 		}
 	}
 
@@ -81,19 +80,15 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 
 	// Add edges by fileDep/target relationship
 	for i, t1 := range tasks {
-		t1fc := t1.fileDep.Cardinality() > 0
 		// Sanity check: fileDeps either exist or are targets
 		// What deps are NOT targets?
-		if t1fc {
-			notTargets := tasks[i].fileDep.Difference(allTargets)
-			// All these must exist
-			for path := range notTargets.Iter() {
-				if !fileExists(path.(string)) {
-					log.Fatalf("Path %s is a dependency of task %s and is missing.", path, tasks[i].name)
-				}
+		notTargets := tasks[i].fileDep.Difference(allTargets)
+		// All these must exist
+		for path := range notTargets.Iter() {
+			if !fileExists(path.(string)) {
+				log.Fatalf("Path %s is a dependency of task %s and is missing.", path, tasks[i].name)
 			}
 		}
-
 		for fd := range t1.fileDep.Iter() {
 			if t2id, ok := tasksByTarget[fd.(string)]; ok {
 				graph.AddEdge(t1.name, tasks[t2id].name)
@@ -102,9 +97,10 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 	}
 
 	// Sort topologically and return
-	nameResults, err := graph.TopSort(root.name)
-	if err != nil {
-		log.Fatal("Error sorting tasks: ", err)
+	fmt.Printf("Sorting\n")
+	nameResults, ok := graph.Toposort()
+	if !ok {
+		log.Fatal("Error sorting tasks, cycle detected!")
 	}
 
 	// Re-map IDs to tasks
@@ -143,7 +139,6 @@ func hashFile(path string) string {
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
-
 
 // FilterTasks takes a list of tasks and return tasks that are not up to date.
 func FilterTasks(tasks []Task, db *storm.DB) []Task {
@@ -196,7 +191,7 @@ func UpdateDepData(task Task, db *storm.DB) {
 
 func fileExists(path string) bool {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-			return false
+		return false
 	}
 	return true
 }
@@ -253,15 +248,15 @@ func main() {
 			targets: mapset.NewSet(),
 			taskDep: mapset.NewSet(),
 		}
-		tasks[i].targets.Add(fmt.Sprintf("foo-%d", i))
-		tasks[i].fileDep.Add("foo")
+		// tasks[i].targets.Add(fmt.Sprintf("foo-%d", i))
+		// tasks[i].fileDep.Add(fmt.Sprintf("foo-%d", i-1))
 	}
 	fmt.Printf("Scheduling %d tasks\n", count)
 	// TODO: cleanup tasks that don't exist anymore
 	r := ScheduleTasks(tasks[:], db)
 	for _, t := range r {
 		UpdateDepData(t, db)
-		// fmt.Printf("%v(%v) ->", t.name, dirty(t, db))
+		fmt.Printf("%v(%v) ->", t.name, dirty(t, db))
 	}
 	fmt.Printf("Done.\n")
 }
