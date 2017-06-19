@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime/pprof"
 
 	"reflect"
 
@@ -65,16 +66,6 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 		}
 	}
 
-	// Sanity check: targets can't be repeated
-	for i, t1 := range tasks {
-		for _, t2 := range tasks[i+1:] {
-			inter := t1.targets.Intersect(t2.targets)
-			if inter.Cardinality() > 0 {
-				log.Fatalf("Tasks %s and %s share targets: %s", t1.name, t2.name, inter)
-			}
-		}
-	}
-
 	// Sanity check: fileDeps either exist or are targets
 	allTargets := mapset.NewSet()
 	for i := range tasks {
@@ -92,11 +83,19 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 	}
 
 	// Add edges by fileDep/target relationship
-	for _, source := range tasks {
-		for _, dest := range tasks {
-			intersection := source.fileDep.Intersect(dest.targets)
+	for i, t1 := range tasks {
+		for _, t2 := range tasks[i+1:] {
+			intersection := t1.targets.Intersect(t2.targets)
 			if intersection.Cardinality() > 0 {
-				graph.AddEdge(source.name, dest.name)
+				log.Fatalf("Tasks %s and %s share targets: %s", t1.name, t2.name, intersection)
+			}
+			intersection = t1.fileDep.Intersect(t2.targets)
+			if intersection.Cardinality() > 0 {
+				graph.AddEdge(t1.name, t2.name)
+			}
+			intersection = t2.fileDep.Intersect(t1.targets)
+			if intersection.Cardinality() > 0 {
+				graph.AddEdge(t2.name, t1.name)
 			}
 		}
 	}
@@ -199,6 +198,7 @@ func UpdateDepData(task Task, db *storm.DB) {
 // * The targets of the task don't exist
 // TODO: a dirty task has a target that is a fileDep of this task (and so on)
 func dirty(task Task, db *storm.DB) bool {
+	return true
 	old := GetLastDepData(task, db)
 	new := CalculateDepData(task)
 	depsChanged := !reflect.DeepEqual(old, new)
@@ -222,12 +222,20 @@ func dirty(task Task, db *storm.DB) bool {
 }
 
 func main() {
+
+	f, err := os.Create("cosa.prof")
+	if err != nil {
+		log.Fatal(err)
+	}
+	pprof.StartCPUProfile(f)
+	defer pprof.StopCPUProfile()
+
 	// TODO: see options to improve performance (not sync!)
 	db := InitDB("my.db")
 	db.Bolt.NoSync = true
 	defer db.Close()
 
-	count := 1000
+	count := 10000
 
 	tasks := make([]Task, count)
 
@@ -244,7 +252,7 @@ func main() {
 	r := ScheduleTasks(tasks[:], db)
 	for _, t := range r {
 		UpdateDepData(t, db)
-		fmt.Printf("%v(%v) ->", t.name, dirty(t, db))
+		// fmt.Printf("%v(%v) ->", t.name, dirty(t, db))
 	}
 	fmt.Printf("Done.\n")
 }
