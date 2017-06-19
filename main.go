@@ -72,17 +72,6 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 		allTargets = allTargets.Union(tasks[i].targets)
 	}
 
-	for i := range tasks {
-		// What deps are NOT targets?
-		notTargets := tasks[i].fileDep.Difference(allTargets)
-		// All these must exist
-		for path := range notTargets.Iter() {
-			if _, err := os.Stat(path.(string)); os.IsNotExist(err) {
-				log.Fatalf("Path %s is a dependency of task %s and is missing.", path, tasks[i].name)
-			}
-		}
-	}
-
 	// Add edges by fileDep/target relationship
 	for i, t1 := range tasks {
 		t1tc := t1.targets.Cardinality() > 0
@@ -92,7 +81,7 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 			notTargets := tasks[i].fileDep.Difference(allTargets)
 			// All these must exist
 			for path := range notTargets.Iter() {
-				if _, err := os.Stat(path.(string)); os.IsNotExist(err) {
+				if !fileExists(path.(string)) {
 					log.Fatalf("Path %s is a dependency of task %s and is missing.", path, tasks[i].name)
 				}
 			}
@@ -153,7 +142,7 @@ func InitDB(path string) *storm.DB {
 // hashFile calculates the md5 hash of a file
 func hashFile(path string) string {
 	// FIles that don't exist have invalud hashes
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if !fileExists(path) {
 		return ""
 	}
 	f, err := os.Open(path)
@@ -168,6 +157,7 @@ func hashFile(path string) string {
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
+
 
 // FilterTasks takes a list of tasks and return tasks that are not up to date.
 func FilterTasks(tasks []Task, db *storm.DB) []Task {
@@ -218,6 +208,13 @@ func UpdateDepData(task Task, db *storm.DB) {
 	}
 }
 
+func fileExists(path string) bool {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+			return false
+	}
+	return true
+}
+
 // dirty calculates if a task needs to run again. That can be because:
 // * depFiles have changed since last successful run
 // * This task has never run before
@@ -232,14 +229,14 @@ func dirty(task Task, db *storm.DB) bool {
 	}
 	// If any fileDep doesn't exist, task is dirty
 	for path := range task.fileDep.Iter() {
-		if _, err := os.Stat(path.(string)); os.IsNotExist(err) {
+		if !fileExists(path.(string)) {
 			return true
 		}
 	}
 
 	// If any target doesn't exist, task is dirty
 	for path := range task.targets.Iter() {
-		if _, err := os.Stat(path.(string)); os.IsNotExist(err) {
+		if !fileExists(path.(string)) {
 			return true
 		}
 	}
@@ -259,7 +256,7 @@ func main() {
 	db.Bolt.NoSync = true
 	defer db.Close()
 
-	count := 20000
+	count := 10000
 
 	tasks := make([]Task, count)
 
@@ -270,6 +267,8 @@ func main() {
 			targets: mapset.NewSet(),
 			taskDep: mapset.NewSet(),
 		}
+		tasks[i].targets.Add(fmt.Sprintf("foo-%d", i))
+		tasks[i].fileDep.Add(fmt.Sprintf("foo", i))
 	}
 	fmt.Printf("Scheduling %d tasks\n", count)
 	// TODO: cleanup tasks that don't exist anymore
