@@ -268,7 +268,7 @@ func main() {
 			taskDep: mapset.NewSet(),
 		}
 		tasks[i].targets.Add(fmt.Sprintf("foo-%d", i))
-		tasks[i].fileDep.Add(fmt.Sprintf("foo", i))
+		tasks[i].fileDep.Add("foo")
 	}
 	fmt.Printf("Scheduling %d tasks\n", count)
 	// TODO: cleanup tasks that don't exist anymore
