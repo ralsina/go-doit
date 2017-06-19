@@ -85,17 +85,27 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 	// Add edges by fileDep/target relationship
 	for i, t1 := range tasks {
 		for _, t2 := range tasks[i+1:] {
-			intersection := t1.targets.Intersect(t2.targets)
-			if intersection.Cardinality() > 0 {
-				log.Fatalf("Tasks %s and %s share targets: %s", t1.name, t2.name, intersection)
+			t1tc := t1.targets.Cardinality()
+			t2tc := t2.targets.Cardinality()
+			if (t1tc > 0) && (t2tc > 0) {
+				intersection := t1.targets.Intersect(t2.targets)
+				if intersection.Cardinality() > 0 {
+					log.Fatalf("Tasks %s and %s share targets: %s", t1.name, t2.name, intersection)
+				}
 			}
-			intersection = t1.fileDep.Intersect(t2.targets)
-			if intersection.Cardinality() > 0 {
-				graph.AddEdge(t1.name, t2.name)
+
+			if t2tc > 0 {
+				intersection := t1.fileDep.Intersect(t2.targets)
+				if intersection.Cardinality() > 0 {
+					graph.AddEdge(t1.name, t2.name)
+				}
 			}
-			intersection = t2.fileDep.Intersect(t1.targets)
-			if intersection.Cardinality() > 0 {
-				graph.AddEdge(t2.name, t1.name)
+
+			if t1tc > 0 {
+				intersection := t2.fileDep.Intersect(t1.targets)
+				if intersection.Cardinality() > 0 {
+					graph.AddEdge(t2.name, t1.name)
+				}
 			}
 		}
 	}
