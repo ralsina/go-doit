@@ -16,9 +16,12 @@ import (
 
 //Task is a struct describing a task
 type Task struct {
-	name    string
+	name string
+	// fileDep is the set of files that this task depends on
 	fileDep mapset.Set
+	// targets is the set of files this task generates
 	targets mapset.Set
+	// taskDep is the set of tasks this task requires be ran BEFORE it
 	taskDep mapset.Set
 }
 
@@ -26,7 +29,8 @@ type Task struct {
 type TaskMap map[string]Task
 
 // ScheduleTasks sorts tasks on order of execution to satisfy
-// dependencies.
+// dependencies. It also removes all tasks that have their
+// dependencies unchanged since last successful run.
 func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 	taskNameMap := make(map[string]Task)
 	root := Task{
@@ -90,10 +94,9 @@ func ScheduleTasks(tasks []Task, db *storm.DB) []Task {
 	// Add edges by fileDep/target relationship
 	for _, source := range tasks {
 		for _, dest := range tasks {
-			for targetFile := range dest.targets.Iter() {
-				if source.fileDep.Contains(targetFile) {
-					graph.AddEdge(source.name, dest.name)
-				}
+			intersection := source.fileDep.Intersect(dest.targets)
+			if intersection.Cardinality() > 0 {
+				graph.AddEdge(source.name, dest.name)
 			}
 		}
 	}
@@ -122,6 +125,7 @@ func InitDB(path string) *storm.DB {
 	return db
 }
 
+// hashFile calculates the md5 hash of a file
 func hashFile(path string) string {
 	// FIles that don't exist have invalud hashes
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -189,7 +193,11 @@ func UpdateDepData(task Task, db *storm.DB) {
 	}
 }
 
-// dirty calculates if a task deps have changed since last run
+// dirty calculates if a task needs to run again. That can be because:
+// * depFiles have changed since last successful run
+// * This task has never run before
+// * The targets of the task don't exist
+// TODO: a dirty task has a target that is a fileDep of this task (and so on)
 func dirty(task Task, db *storm.DB) bool {
 	old := GetLastDepData(task, db)
 	new := CalculateDepData(task)
@@ -214,36 +222,29 @@ func dirty(task Task, db *storm.DB) bool {
 }
 
 func main() {
+	// TODO: see options to improve performance (not sync!)
 	db := InitDB("my.db")
+	db.Bolt.NoSync = true
 	defer db.Close()
 
-	t1 := Task{
-		name:    "t1",
-		fileDep: mapset.NewSet(),
-		targets: mapset.NewSet(),
-		taskDep: mapset.NewSet(),
+	count := 1000
+
+	tasks := make([]Task, count)
+
+	for i := 0; i < count; i++ {
+		tasks[i] = Task{
+			name:    fmt.Sprintf("task-%d", i),
+			fileDep: mapset.NewSet(),
+			targets: mapset.NewSet(),
+			taskDep: mapset.NewSet(),
+		}
 	}
-	t2 := Task{
-		name:    "t2",
-		fileDep: mapset.NewSet(),
-		targets: mapset.NewSet(),
-		taskDep: mapset.NewSet(),
-	}
-	t3 := Task{
-		name:    "t3",
-		fileDep: mapset.NewSet(),
-		targets: mapset.NewSet(),
-		taskDep: mapset.NewSet(),
-	}
-	t1.fileDep.Add("f1")
-	t1.fileDep.Add("f2")
-	t3.targets.Add("f2")
-	t2.targets.Add("f1")
-	t2.targets.Add("t1")
-	tasks := [...]Task{t1, t2, t3}
+	fmt.Printf("Scheduling %d tasks\n", count)
+	// TODO: cleanup tasks that don't exist anymore
 	r := ScheduleTasks(tasks[:], db)
 	for _, t := range r {
 		UpdateDepData(t, db)
 		fmt.Printf("%v(%v) ->", t.name, dirty(t, db))
 	}
+	fmt.Printf("Done.\n")
 }
