@@ -198,7 +198,6 @@ func UpdateDepData(task Task, db *storm.DB) {
 // * The targets of the task don't exist
 // TODO: a dirty task has a target that is a fileDep of this task (and so on)
 func dirty(task Task, db *storm.DB) bool {
-	return true
 	old := GetLastDepData(task, db)
 	new := CalculateDepData(task)
 	depsChanged := !reflect.DeepEqual(old, new)
@@ -235,7 +234,7 @@ func main() {
 	db.Bolt.NoSync = true
 	defer db.Close()
 
-	count := 10000
+	count := 1000
 
 	tasks := make([]Task, count)
 
